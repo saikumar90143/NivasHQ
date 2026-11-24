@@ -1,0 +1,429 @@
+// Add this to your package.json:
+// "prisma": {
+//   "seed": "ts-node --compiler-options {\"module\":\"commonjs\"} prisma/seed.ts"
+// }
+
+import { PrismaClient, PropertyType, ListingType, PropertyStatus, UserRole } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+
+const prisma = new PrismaClient();
+
+const generateId = () => crypto.randomUUID();
+
+async function main() {
+  console.log('Starting seed...');
+
+  // Clean existing data
+  console.log('Cleaning existing data...');
+  await prisma.article.deleteMany();
+  await prisma.buyerRequirement.deleteMany();
+  await prisma.lead.deleteMany();
+  await prisma.nearbyPlace.deleteMany();
+  await prisma.subscription.deleteMany();
+  await prisma.subscriptionPlan.deleteMany();
+  await prisma.propertyAmenity.deleteMany();
+  await prisma.amenity.deleteMany();
+  await prisma.propertyImage.deleteMany();
+  await prisma.property.deleteMany();
+  await prisma.builderProject.deleteMany();
+  await prisma.builderProfile.deleteMany();
+  await prisma.agentArea.deleteMany();
+  await prisma.agentProfile.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.locality.deleteMany();
+  await prisma.city.deleteMany();
+  await prisma.state.deleteMany();
+
+  const passwordHash = await bcrypt.hash('admin123', 10);
+  const userPassword = await bcrypt.hash('password123', 10);
+
+  // 1. Geography
+  console.log('Creating geography...');
+  const state = await prisma.state.create({
+    data: { id: generateId(), name: 'Telangana', slug: 'telangana' },
+  });
+
+  const city = await prisma.city.create({
+    data: { id: generateId(), name: 'Hyderabad', slug: 'hyderabad', stateId: state.id },
+  });
+
+  const localitiesData = [
+    { name: 'Gachibowli', lat: 17.4401, lng: 78.3489 },
+    { name: 'HITEC City', lat: 17.4474, lng: 78.3762 },
+    { name: 'Kokapet', lat: 17.3934, lng: 78.3188 },
+    { name: 'Narsingi', lat: 17.3888, lng: 78.3619 },
+    { name: 'Jubilee Hills', lat: 17.4325, lng: 78.4070 },
+    { name: 'Banjara Hills', lat: 17.4156, lng: 78.4347 },
+    { name: 'Manikonda', lat: 17.3986, lng: 78.3968 },
+    { name: 'Madhapur', lat: 17.4483, lng: 78.3915 },
+    { name: 'Kondapur', lat: 17.4622, lng: 78.3568 },
+    { name: 'Kukatpally', lat: 17.4849, lng: 78.4138 },
+    { name: 'Miyapur', lat: 17.4933, lng: 78.3577 },
+    { name: 'Tellapur', lat: 17.4443, lng: 78.2982 },
+  ];
+
+  const localities = await Promise.all(
+    localitiesData.map((loc) =>
+      prisma.locality.create({
+        data: {
+          id: generateId(),
+          name: loc.name,
+          slug: loc.name.toLowerCase().replace(' ', '-'),
+          cityId: city.id,
+          latitude: loc.lat,
+          longitude: loc.lng,
+          isActive: true,
+        },
+      })
+    )
+  );
+
+  // 2. Users (Admin, Agents, Builders)
+  console.log('Creating users...');
+  await prisma.user.create({
+    data: {
+      id: generateId(),
+      name: 'Nivasa Admin',
+      email: 'admin@nivasahq.com',
+      passwordHash: passwordHash,
+      role: UserRole.ADMIN,
+      isVerified: true,
+    },
+  });
+
+  const agentNames = ['Rajesh Kumar', 'Suresh Reddy', 'Priya Sharma', 'Anil Kumar', 'Sneha Rao'];
+  const agents = await Promise.all(
+    agentNames.map((name, i) =>
+      prisma.user.create({
+        data: {
+          id: generateId(),
+          name,
+          email: `agent${i + 1}@nivasahq.com`,
+          phone: `987654321${i}`,
+          passwordHash: userPassword,
+          role: UserRole.AGENT,
+          isVerified: true,
+          agentProfile: {
+            create: {
+              id: generateId(),
+              experience: Math.floor(Math.random() * 10) + 2,
+              reraId: `TS/RERA/AG/${1000 + i}`,
+              companyName: `${name} Real Estate`,
+              about: `Experienced agent serving Hyderabad with over ${Math.floor(Math.random() * 10) + 2} years of experience.`,
+            },
+          },
+        },
+        include: { agentProfile: true },
+      })
+    )
+  );
+
+  // Assign agent areas
+  for (let i = 0; i < agents.length; i++) {
+    await prisma.agentArea.create({
+      data: {
+        id: generateId(),
+        agentProfileId: agents[i].agentProfile!.id,
+        localityId: localities[i % localities.length].id,
+      },
+    });
+    await prisma.agentArea.create({
+      data: {
+        id: generateId(),
+        agentProfileId: agents[i].agentProfile!.id,
+        localityId: localities[(i + 1) % localities.length].id,
+      },
+    });
+  }
+
+  const builderNames = ['Aparna Constructions', 'My Home Constructions'];
+  const builders = await Promise.all(
+    builderNames.map((name, i) =>
+      prisma.user.create({
+        data: {
+          id: generateId(),
+          name,
+          email: `builder${i + 1}@nivasahq.com`,
+          phone: `887654321${i}`,
+          passwordHash: userPassword,
+          role: UserRole.BUILDER,
+          isVerified: true,
+          builderProfile: {
+            create: {
+              id: generateId(),
+              companyName: name,
+              establishedYear: 1990 + i * 5,
+              reraId: `TS/RERA/BLD/${2000 + i}`,
+              description: `One of the top builders in Hyderabad, delivering quality homes since ${1990 + i * 5}.`,
+            },
+          },
+        },
+        include: { builderProfile: true },
+      })
+    )
+  );
+
+  // 3. Builder Projects
+  console.log('Creating builder projects...');
+  const projectsData = [
+    { name: 'Aparna Sarovar Grande', locality: 'Narsingi', builderId: builders[0].builderProfile!.id },
+    { name: 'My Home Bhooja', locality: 'HITEC City', builderId: builders[1].builderProfile!.id },
+    { name: 'Prestige High Fields', locality: 'Gachibowli', builderId: builders[0].builderProfile!.id },
+  ];
+
+  const projects = await Promise.all(
+    projectsData.map(async (p) => {
+      const loc = localities.find(l => l.name === p.locality)!;
+      return prisma.builderProject.create({
+        data: {
+          id: generateId(),
+          name: p.name,
+          builderId: p.builderId,
+          localityId: loc.id,
+          status: 'UNDER_CONSTRUCTION',
+          possessionDate: new Date('2026-12-01'),
+          description: `Luxury apartments in ${loc.name} by top builder.`,
+        },
+      });
+    })
+  );
+
+  // 4. Amenities
+  console.log('Creating amenities...');
+  const defaultAmenities = [
+    'Swimming Pool', 'Gymnasium', 'Club House', '24/7 Security', 'Power Backup',
+    'Car Parking', 'Childrens Play Area', 'Jogging Track', 'Tennis Court', 'Basketball Court',
+    'Indoor Games', 'Library', 'Yoga/Meditation Area', 'Vastu Compliant', 'Intercom',
+    'Rain Water Harvesting', 'Sewage Treatment Plant', 'CCTV Camera', 'Lift', 'Wifi Connectivity',
+    'Piped Gas', 'Maintenance Staff', 'Visitor Parking', 'Waste Disposal'
+  ];
+
+  const amenityRecords = await Promise.all(
+    defaultAmenities.map((name) =>
+      prisma.amenity.create({
+        data: {
+          id: generateId(),
+          name,
+          icon: name.toLowerCase().replace(' ', '-'),
+        },
+      })
+    )
+  );
+
+  // 5. Properties
+  console.log('Creating 50+ properties...');
+  const properties = [];
+  for (let i = 1; i <= 55; i++) {
+    const isRent = i % 3 === 0;
+    const locality = localities[i % localities.length];
+    const agent = agents[i % agents.length];
+    
+    let propertyType = PropertyType.APARTMENT;
+    if (i % 5 === 0) propertyType = PropertyType.VILLA;
+    if (i % 7 === 0) propertyType = PropertyType.INDEPENDENT_HOUSE;
+    if (i % 11 === 0) propertyType = PropertyType.COMMERCIAL;
+    if (i % 13 === 0) propertyType = PropertyType.PLOT;
+
+    const bedrooms = (i % 4) + 1;
+    const bathrooms = bedrooms > 1 ? bedrooms - 1 : 1;
+    const area = isRent ? 800 + (i * 20) : 1000 + (i * 50);
+    const price = isRent ? 15000 + (i * 1000) : 3000000 + (i * 500000);
+    
+    let title = '';
+    if (isRent) {
+      title = `${bedrooms} BHK ${propertyType} for Rent in ${locality.name}`;
+    } else {
+      title = `Luxury ${bedrooms} BHK ${propertyType} in ${locality.name}`;
+      if (propertyType === PropertyType.PLOT) {
+        title = `Premium Plot for Sale in ${locality.name}`;
+      }
+    }
+
+    const property = await prisma.property.create({
+      data: {
+        id: generateId(),
+        title,
+        description: `Spacious and well-ventilated ${propertyType} located in the prime area of ${locality.name}. Excellent connectivity and modern amenities.`,
+        propertyType,
+        listingcategory: isRent ? ListingType.RENT : ListingType.SALE,
+        status: i % 10 === 0 ? PropertyStatus.PENDING : PropertyStatus.AVAILABLE,
+        price,
+        builtUpArea: propertyType !== PropertyType.PLOT ? area : null,
+        plotArea: propertyType === PropertyType.PLOT || propertyType === PropertyType.VILLA ? area + 500 : null,
+        bedrooms: propertyType !== PropertyType.PLOT && propertyType !== PropertyType.COMMERCIAL ? bedrooms : null,
+        bathrooms: propertyType !== PropertyType.PLOT && propertyType !== PropertyType.COMMERCIAL ? bathrooms : null,
+        furnishing: 'SEMI_FURNISHED',
+        facing: 'EAST',
+        floorNumber: propertyType === PropertyType.APARTMENT ? (i % 15) + 1 : null,
+        totalFloors: propertyType === PropertyType.APARTMENT ? 20 : null,
+        latitude: locality.latitude + (Math.random() - 0.5) * 0.01,
+        longitude: locality.longitude + (Math.random() - 0.5) * 0.01,
+        address: `Plot No ${i}, Phase ${i % 3 + 1}, ${locality.name}, Hyderabad`,
+        localityId: locality.id,
+        userId: agent.id,
+        isVerified: i % 4 !== 0,
+        isFeatured: i % 6 === 0,
+        createdAt: new Date(Date.now() - Math.random() * 10000000000),
+      },
+    });
+    
+    properties.push(property);
+
+    // Images
+    const imageCount = (i % 3) + 2;
+    for (let j = 0; j < imageCount; j++) {
+      await prisma.propertyImage.create({
+        data: {
+          id: generateId(),
+          propertyId: property.id,
+          url: `https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&q=80&w=1000&ixlib=rb-4.0.3&sig=${property.id}-${j}`,
+          isMain: j === 0,
+        },
+      });
+    }
+
+    // Assign amenities
+    const numAmenities = Math.floor(Math.random() * 10) + 5;
+    for (let k = 0; k < numAmenities; k++) {
+      await prisma.propertyAmenity.create({
+        data: {
+          propertyId: property.id,
+          amenityId: amenityRecords[k % amenityRecords.length].id,
+        },
+      });
+    }
+  }
+
+  // 6. Subscriptions
+  console.log('Creating subscriptions...');
+  const plansData = [
+    { name: 'Free', price: 0, duration: 30, features: 'Basic listing, 5 Photos' },
+    { name: 'Pro', price: 999, duration: 30, features: 'Featured listing, 20 Photos, Better visibility' },
+    { name: 'Premium', price: 2999, duration: 90, features: 'Top placement, Unlimited Photos, Dedicated RM' },
+  ];
+
+  for (const plan of plansData) {
+    await prisma.subscriptionPlan.create({
+      data: {
+        id: generateId(),
+        name: plan.name,
+        price: plan.price,
+        durationDays: plan.duration,
+        features: JSON.stringify(plan.features.split(', ')),
+        isActive: true,
+      },
+    });
+  }
+
+  // 7. Nearby Places
+  console.log('Creating nearby places...');
+  const placesData = [
+    { name: 'Inorbit Mall', category: 'SHOPPING', lat: 17.4337, lng: 78.3868 },
+    { name: 'Apollo Hospital', category: 'HOSPITAL', lat: 17.4165, lng: 78.4093 },
+    { name: 'DPS School', category: 'SCHOOL', lat: 17.4045, lng: 78.3242 },
+    { name: 'HITEC City Metro', category: 'METRO', lat: 17.4475, lng: 78.3756 },
+    { name: 'Cyber Towers', category: 'IT_PARK', lat: 17.4504, lng: 78.3808 },
+    { name: 'IKEA', category: 'SHOPPING', lat: 17.4395, lng: 78.3769 },
+    { name: 'Gachibowli Stadium', category: 'SPORTS', lat: 17.4455, lng: 78.3475 },
+    { name: 'Care Hospitals', category: 'HOSPITAL', lat: 17.4429, lng: 78.3750 },
+    { name: 'Chirec Public School', category: 'SCHOOL', lat: 17.4552, lng: 78.3626 },
+    { name: 'Raidurg Metro', category: 'METRO', lat: 17.4384, lng: 78.3804 },
+  ];
+
+  for (const place of placesData) {
+    await prisma.nearbyPlace.create({
+      data: {
+        id: generateId(),
+        name: place.name,
+        category: place.type,
+        latitude: place.lat,
+        longitude: place.lng,
+        localityId: localities[1].id, // Just assigning to HITEC City for seed
+      },
+    });
+  }
+
+  // 8. Leads
+  console.log('Creating leads...');
+  for (let i = 0; i < 5; i++) {
+    await prisma.lead.create({
+      data: {
+        id: generateId(),
+        propertyId: properties[i].id,
+        name: `Buyer ${i + 1}`,
+        email: `buyer${i + 1}@example.com`,
+        phone: `998877665${i}`,
+        message: 'I am interested in this property. Please call me back.',
+        status: 'NEW',
+      },
+    });
+  }
+
+  // 9. Buyer Requirements
+  console.log('Creating buyer requirements...');
+  await prisma.buyerRequirement.create({
+    data: {
+      id: generateId(),
+      name: 'Ravi Kumar',
+      email: 'ravi@example.com',
+      phone: '9871234560',
+      propertycategory: PropertyType.APARTMENT,
+      minBudget: 5000000,
+      maxBudget: 8000000,
+      bedrooms: 3,
+      localities: 'Gachibowli, Narsingi',
+      status: 'ACTIVE',
+    },
+  });
+
+  await prisma.buyerRequirement.create({
+    data: {
+      id: generateId(),
+      name: 'Sneha P',
+      email: 'sneha@example.com',
+      phone: '9871234561',
+      propertycategory: PropertyType.VILLA,
+      minBudget: 20000000,
+      maxBudget: 35000000,
+      bedrooms: 4,
+      localities: 'Kokapet',
+      status: 'ACTIVE',
+    },
+  });
+
+  // 10. Articles
+  console.log('Creating articles...');
+  const articlesData = [
+    { title: 'Top 5 Emerging Localities in Hyderabad for Real Estate Investment in 2025', slug: 'top-5-emerging-localities-hyderabad-2025' },
+    { title: 'A Complete Guide to Buying Your First Home in Telangana', slug: 'guide-buying-first-home-telangana' },
+    { title: 'Understanding RERA: What Buyers Need to Know', slug: 'understanding-rera-buyers' },
+  ];
+
+  for (const art of articlesData) {
+    await prisma.article.create({
+      data: {
+        id: generateId(),
+        title: art.title,
+        slug: art.slug,
+        content: `This is a sample article about ${art.title}. It provides comprehensive details and insights for buyers and investors.`,
+        excerpt: `A quick overview of ${art.title}.`,
+        featuredImageUrl: 'https://images.unsplash.com/photo-1582407947304-fd86f028f716?auto=format&fit=crop&q=80&w=1000',
+        authorId: agents[0].id,
+        status: 'PUBLISHED',
+        publishedAt: new Date(),
+      },
+    });
+  }
+
+  console.log('Seed completed successfully!');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
